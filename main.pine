@@ -1,0 +1,80 @@
+//@version=6
+indicator("Combined Trend Indicator (ST+MACD+EMA+ADX)", overlay=true, shorttitle="CTI")
+
+// INPUTS
+stAtrPeriod  = input.int(10, title="Supertrend ATR Period", minval=1)
+stMultiplier = input.float(3.0, title="Supertrend Multiplier", step=0.1)
+
+// MACD settings
+macdFast   = input.int(12, title="MACD Fast Length", minval=1)
+macdSlow   = input.int(26, title="MACD Slow Length", minval=1)
+macdSignal = input.int(9, title="MACD Signal Length", minval=1)
+
+// EMA settings
+emaLength  = input.int(50, title="EMA Length", minval=1)
+
+// ADX settings
+adxLength    = input.int(14, title="ADX Length", minval=1)
+adxThreshold = input.float(25.0, title="ADX Threshold", step=0.1)
+
+// CALCULATIONS
+
+// 1. Supertrend
+[supertrendValue, stDirection] = ta.supertrend(stMultiplier, stAtrPeriod)
+stVote = stDirection > 0 ? 1 : -1  // +1 if bullish, -1 if bearish
+
+// 2. MACD
+[macdLine, signalLine, _] = ta.macd(close, macdFast, macdSlow, macdSignal)
+macdVote = macdLine > signalLine ? 1 : -1
+
+// 3. EMA
+emaValue = ta.ema(close, emaLength)
+emaVote = close > emaValue ? 1 : -1
+
+// 4. ADX and Directional Indicators (calculated manually)
+tr = ta.tr(true)
+atr = ta.rma(tr, adxLength)
+upMove   = high - high[1]
+downMove = low[1] - low
+plusDM  = (upMove > downMove and upMove > 0) ? upMove : 0.0
+minusDM = (downMove > upMove and downMove > 0) ? downMove : 0.0
+smPlusDM  = ta.rma(plusDM, adxLength)
+smMinusDM = ta.rma(minusDM, adxLength)
+plusDI_val  = (atr != 0) ? 100 * (smPlusDM / atr) : 0.0
+minusDI_val = (atr != 0) ? 100 * (smMinusDM / atr) : 0.0
+sumDI = plusDI_val + minusDI_val
+dx = (sumDI != 0) ? 100 * math.abs(plusDI_val - minusDI_val) / sumDI : 0.0
+adxValue = ta.rma(dx, adxLength)
+adxVote = 0.0
+if adxValue >= adxThreshold
+    adxVote := plusDI_val > minusDI_val ? 1 : -1
+
+// Total combined score (RSI removed)
+score = stVote + macdVote + emaVote + adxVote
+
+// Overall signal: if score > 0 -> long, if score < 0 -> short, if score == 0 -> neutral.
+overallSignal = score > 0 ? 1 : score < 0 ? -1 : 0
+
+// SIGNAL AGGREGATION
+aggLen = input.int(1, title="Signal Aggregation Length", minval=1)
+sumSignal = 0.0
+if aggLen > 1
+    for i = 1 to aggLen
+        sumSignal := sumSignal + overallSignal[i]
+finalSignal = aggLen == 1 ? overallSignal : (sumSignal > 0 ? 1 : sumSignal < 0 ? -1 : 0)
+
+// PLOTS
+plotshape(finalSignal == 1, title="Long Signal", location=location.belowbar, 
+     color=color.green, style=shape.triangleup, size=size.tiny)
+plotshape(finalSignal == -1, title="Short Signal", location=location.abovebar, 
+     color=color.red, style=shape.triangledown, size=size.tiny)
+plotshape(finalSignal == 0, title="Neutral Signal", location=location.top, 
+     color=color.gray, style=shape.circle, size=size.tiny)
+
+bgcolor(finalSignal == 1 ? color.new(color.green, 90) : finalSignal == -1 ? color.new(color.red, 90) : color.new(color.gray, 90), title="Background Color")
+plot(supertrendValue, title="Supertrend", color=stDirection > 0 ? color.green : color.red)
+plot(emaValue, title="EMA", color=color.blue)
+
+// ALERT: This alert fires on every closed bar.
+// The alert message is "LONG" if long, "SHORT" if short, and "NEU" if neutral.
+alert(finalSignal == 1 ? "LONG" : finalSignal == -1 ? "SHORT" : "NEU", alert.freq_once_per_bar_close)
